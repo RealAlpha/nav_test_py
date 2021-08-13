@@ -1,3 +1,6 @@
+import threading
+import time
+
 import numpy as np
 import serial
 
@@ -40,10 +43,9 @@ def scene_to_glob(x, y, z):
 
 #print(scene_to_glob(*glob_to_scene(10.000000000001,10,100)))
 
-ser = serial.Serial('/dev/tty.usbserial-A900HIOM', 1000000)
 
 
-def get_measurement():
+def get_measurement(ser):
     try:
         line = ""
         while line == "":
@@ -71,9 +73,58 @@ def get_measurement():
         return None
 
 
+ACCEL_AVAIL_FLAG = 0b1
+GYRO_AVAIL_FLAG = 0b1 << 1
+GPS_AVAIL_FLAG = 0b1 << 2
+
+# Various globals that allow the receiving thread to tell the mainn program about updates (much like the micro will
+# eventually work with its interrupts)
+stateFlags = 0
+accelState = {}
+gyroState = {}
+gpsState = {}
+
+
+def perform_data_acquisition():
+    """
+    Helper function that runs an infinite loop updatinng the staet based on serial data.
+    NOTE: Should be run in a thread.
+    """
+    # Esure we ca access the globals from this thread/functionn
+    global stateFlags
+    global accelState
+    global gyroState
+    global gpsState
+
+    # Establish a serial connection
+    ser = serial.Serial('/dev/tty.usbserial-A900HIOM', 1000000)
+
+    # Perform data acquisition until some form of exception is raised/the thread is otherwise terminated
+    while True:
+        measurement = get_measurement(ser)
+        if not measurement:
+            continue
+
+        dev = measurement.get('dev')
+        if dev == 'GYRO':
+            stateFlags |= GYRO_AVAIL_FLAG
+            gyroState = measurement
+        elif dev == 'ACCEL':
+            stateFlags |= ACCEL_AVAIL_FLAG
+            accelState = measurement
+        elif dev == 'GPS':
+            stateFlags |= GPS_AVAIL_FLAG
+            gpsState = measurement
+
+
+# Start the data acquisition thread
+data_thread = threading.Thread(target=perform_data_acquisition)
+data_thread.start()
+
 while True:
-    measurement = get_measurement()
-    print(measurement)
+    print(f"update_flag:{stateFlags:#010b}")
+    stateFlags = 0
+    time.sleep(0.05)
     continue
     if measurement:
         print(glob_to_scene(measurement['lat'], measurement['lon'], 0))
