@@ -44,7 +44,6 @@ def scene_to_glob(x, y, z):
 #print(scene_to_glob(*glob_to_scene(10.000000000001,10,100)))
 
 
-
 def get_measurement(ser):
     try:
         line = ""
@@ -71,6 +70,80 @@ def get_measurement(ser):
         print(e)
         # Handles random exceptions and "failure" messages like: "NO FIX!"
         return None
+
+
+class AttitudeEstimator:
+    def __init__(self):
+        # Initial conditions
+        # NOTE: [y,p,r,by,bp,br]
+        self.estimate = np.array([0, 0, 0, 0, 0, 0])
+        self.estimate_covariance = np.identity(self.estimate.size)
+        np.fill_diagonal(self.estimate_covariance, np.array([60 ** 2, 60 ** 2, 60 ** 2, 5 ** 2, 5 ** 2, 5 ** 2]))
+
+        # Assume gyros are accurate to +- 1deg/s in all axis and uncorrelated between axis
+        self.gyro_axis_variance = 1 ** 2
+        self.gyro_covariance = self.gyro_axis_variance * np.identity(3)
+
+        # Assume the yaw, pitch and roll signals are accurate to +- 5 deg
+        self.accel_converted_variance = 1 ** 2
+        self.accel_converted_covariance = self.accel_converted_variance * np.identity(3)
+
+        # Helper variable for creating identity matrices and the kind
+        self.state_size = self.estimate.size
+        self.half_state_size = int(self.state_size / 2)
+
+        # Store yaw rates as global so we can run the extrapolation knowing the "real" dt + don't use future yaw rates on the old state
+        self.u = np.array([0, 0, 0])
+    
+    def run_filter(self, dt, accel_measurement, gyro_measurement):
+        # Convert the accelerometer measurement into euler angles (in degrees)
+        yaw = np.rad2deg(np.arctan2(accel_measurement['x'], accel_measurement['z']))
+        pitch = np.rad2deg(np.arctan2(accel_measurement['y'], accel_measurement['z']))
+        roll = np.rad2deg(np.arctan2(accel_measurement['x'], accel_measurement['y']))
+        #print(f"y={yaw},p={pitch},r={roll}")
+        #print(accel_measurement)
+
+        # Extrapolate the state
+        F = np.vstack((np.hstack((np.identity(self.half_state_size), -dt * np.identity(self.half_state_size))),
+                       np.hstack((np.zeros((self.half_state_size, self.half_state_size)), np.identity(self.half_state_size)))))
+        G = dt * np.vstack((np.identity(self.half_state_size), np.zeros((self.half_state_size, self.half_state_size))))
+
+        # Estimate covariance - obtained from the gyro's accuracy combined with how gyros affect the model (e.g. larger
+        # dt means less certainty in the model)
+        # pn = 1000 * dt * np.vstack((np.zeros((self.half_state_size, self.half_state_size)), np.identity(self.half_state_size)))
+        Q = G @ self.gyro_covariance @ G.T
+
+        extrapolated_estimate = F @ self.estimate + G @ self.u
+        extrapolated_estimate_covariance = F @ self.estimate_covariance @ F.T + Q
+
+        # Compute Kalman gain
+        # NOTE: Since measuremennt is a dict rather than a vector, we're just going to extract the relevant info ->
+        # currently (since no bias/other stuff in state) our observation matrix will just be I
+        in_measurement = np.array([yaw, pitch, roll])
+
+        H = np.vstack((np.identity(self.half_state_size), np.zeros((self.half_state_size, self.half_state_size)))).T
+
+        R = self.accel_converted_covariance
+        kalman_gain = extrapolated_estimate_covariance @ H.T @ np.linalg.inv(
+            H @ extrapolated_estimate_covariance @ H.T + R)
+
+        # Create new estimate & corresponding covariance
+        self.estimate = extrapolated_estimate + kalman_gain @ (in_measurement - H @ extrapolated_estimate)
+        self.estimate_covariance = (np.identity(self.state_size) - kalman_gain @ H) @ extrapolated_estimate_covariance @ (
+                np.identity(self.state_size) - kalman_gain @ H).T + kalman_gain @ R @ kalman_gain.T
+
+        # Create the input variable from the measurement => [wx, wy, wz]
+        self.u = np.array([gyro_measurement['gz'], gyro_measurement['gx'], gyro_measurement['gy']])
+
+    def get_estimate_ypr(self):
+        return {
+            'yaw': self.estimate[0],
+            'pitch': self.estimate[1],
+            'roll': self.estimate[2]
+        }
+
+    def get_estimate_covariance(self):
+        return self.estimate_covariance
 
 
 ACCEL_AVAIL_FLAG = 0b1
@@ -102,28 +175,39 @@ def perform_data_acquisition():
     # Perform data acquisition until some form of exception is raised/the thread is otherwise terminated
     while True:
         measurement = get_measurement(ser)
+        #print(measurement)
+        #continue
         if not measurement:
             continue
 
         dev = measurement.get('dev')
         if dev == 'GYRO':
-            stateFlags |= GYRO_AVAIL_FLAG
             gyroState = measurement
+            stateFlags |= GYRO_AVAIL_FLAG
         elif dev == 'ACCEL':
-            stateFlags |= ACCEL_AVAIL_FLAG
             accelState = measurement
+            stateFlags |= ACCEL_AVAIL_FLAG
         elif dev == 'GPS':
-            stateFlags |= GPS_AVAIL_FLAG
             gpsState = measurement
+            stateFlags |= GPS_AVAIL_FLAG
 
 
 # Start the data acquisition thread
 data_thread = threading.Thread(target=perform_data_acquisition)
 data_thread.start()
 
+attitude_estimator = AttitudeEstimator()
+last_attitude_time = time.time()
+
 while True:
-    print(f"update_flag:{stateFlags:#010b}")
-    stateFlags = 0
+    current_time = time.time()
+    if stateFlags & ACCEL_AVAIL_FLAG and stateFlags & GYRO_AVAIL_FLAG:
+        attitude_estimator.run_filter(current_time - last_attitude_time, accelState, gyroState)
+        last_attitude_time = current_time
+        #print(f"update_flag:{stateFlags:#010b}")
+        print(f"Estimate: {attitude_estimator.get_estimate_ypr()}")
+        # Clear the accel+gyro flag (TODO: do this at ennd in case another filter needs this data?)
+        stateFlags &= ~(ACCEL_AVAIL_FLAG | GYRO_AVAIL_FLAG)
     time.sleep(0.05)
     continue
     if measurement:
