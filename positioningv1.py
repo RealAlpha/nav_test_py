@@ -1,6 +1,8 @@
+import asyncio
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import socket
 
 import numpy as np
 import serial
@@ -47,16 +49,15 @@ def scene_to_glob(x, y, z):
 #print(scene_to_glob(*glob_to_scene(10.000000000001,10,100)))
 
 
-def get_measurement(ser):
+async def get_measurement(ser):
     try:
         line = ""
         while line == "":
             try:
-                line = ser.readline().decode().strip('\x00')
+                line = (await ser.readline()).decode().strip('\x00')
             except:
                 # Retry
                 continue
-
         pairs = line.split(",")
         parse_result = {}
         for pair in pairs:
@@ -245,7 +246,7 @@ gyroState = {}
 gpsState = {}
 
 
-def perform_data_acquisition():
+async def perform_data_acquisition():
     """
     Helper function that runs an infinite loop updatinng the staet based on serial data.
     NOTE: Should be run in a thread.
@@ -257,11 +258,19 @@ def perform_data_acquisition():
     global gpsState
 
     # Establish a serial connection
-    ser = serial.Serial('/dev/tty.usbserial-A900HIOM', 1000000)
-
+    """
+    #ser = serial.Serial('/dev/tty.usbserial-A900HIOM', 1000000)
+    connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    connection.connect(('ESP-0F1694.home', 5000))
+    connection_fd = connection.makefile()
+    #print(connection)
+    #print(connection_fd)
+    print(connection_fd.readline())
+    """
+    reader, writer = await asyncio.open_connection('ESP-0F1694.home', 5000)
     # Perform data acquisition until some form of exception is raised/the thread is otherwise terminated
     while True:
-        measurement = get_measurement(ser)
+        measurement = await get_measurement(reader)
         #print(measurement)
         #continue
         if not measurement:
@@ -280,7 +289,8 @@ def perform_data_acquisition():
 
 
 # Start the data acquisition thread
-data_thread = threading.Thread(target=perform_data_acquisition)
+asyncio.get_event_loop().create_task(perform_data_acquisition())
+data_thread = threading.Thread(target=asyncio.get_event_loop().run_forever)
 data_thread.start()
 
 attitude_estimator = AttitudeEstimator()
@@ -314,6 +324,7 @@ data_thread.start()
 first_fix = False
 while True:
     current_time = time.time()
+    #print(stateFlags)
     if stateFlags & ACCEL_AVAIL_FLAG and stateFlags & GYRO_AVAIL_FLAG:
         attitude_estimator.run_filter(current_time - last_attitude_time, accelState, gyroState)
         last_attitude_time = current_time
