@@ -1,14 +1,17 @@
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import numpy as np
 import serial
 
-# The latitude/longitude of the datum (Enter, the Netherlands)
+# The latitude/longitude of the datum
 # NOTE: This datum is where the "scene's" origin is - the earth will be assumed
 #       to be *locally* flat.
-datum_lat = 52.2948
-datum_lon = 6.5781
+from pandas._libs import json
+
+datum_lat = 52.544926#52.5719482
+datum_lon = 5.920796#5.814618
 datum_height = 0
 
 # Distance from the origin / used to convert degs -> positions. TODO: Pull data from WGS, this just assumes spherical
@@ -146,6 +149,87 @@ class AttitudeEstimator:
         return self.estimate_covariance
 
 
+class PositionEstimator:
+    def __init__(self):
+        # Initial conditions
+        # NOTE: [x,y,z,vx,vy,vz]
+        self.estimate = np.array([0, 0, 0, 0, 0, 0])
+        self.estimate_covariance = np.identity(self.estimate.size)
+        np.fill_diagonal(self.estimate_covariance, np.array([10000 ** 2, 10000 ** 2, 10000 ** 2, 50 ** 2, 50 ** 2, 50 ** 2]))
+
+        # Assume accels are accurate to +- 0.5m/s^2 in all axis and uncorrelated between axis
+        self.accel_axis_variance = 0.5 ** 2
+        self.accel_covariance = self.accel_axis_variance * np.identity(3)
+
+        # Helper variable for creating identity matrices and the kind
+        self.state_size = self.estimate.size
+        self.half_state_size = int(self.state_size / 2)
+
+    def run_filter_extrapolation(self, dt, accel_measurement):
+        """
+        Simply extrapolates the filter using acceleration results
+        :param dt: time since last extrapolation
+        :param accel_measurement: accelerometer measurements in inertial coordinate system (np 1x3 array; NED)
+        """
+
+        # Extrapolate the state
+        F = np.vstack((np.hstack((np.identity(self.half_state_size), dt * np.identity(self.half_state_size))),
+                       np.hstack((np.zeros((self.half_state_size, self.half_state_size)),
+                                  np.identity(self.half_state_size)))))
+        G = dt * np.vstack((0.5*dt**2*np.identity(self.half_state_size), dt*np.identity(self.half_state_size)))
+
+        # Estimate covariance - obtained from the gyro's accuracy combined with how gyros affect the model (e.g. larger
+        # dt means less certainty in the model)
+        # pn = 1000 * dt * np.vstack((np.zeros((self.half_state_size, self.half_state_size)), np.identity(self.half_state_size)))
+        Q = G @ self.accel_covariance @ G.T
+
+        #print(F)
+        #print(self.estimate)
+        #print("===")
+        #print(G)
+        #print(accel_measurement)
+        #print(G.dot(accel_measurement))
+        #print(G.shape)
+        #print(accel_measurement.shape)
+        self.estimate = F @ self.estimate + G.dot(accel_measurement)
+        self.estimate_covariance = F @ self.estimate_covariance @ F.T + Q
+
+    def run_filter_measurement(self, gps_measurement_data):
+        # Compute Kalman gain
+        # NOTE: Since measuremennt is a dict rather than a vector, we're just going to extract the relevant info ->
+        # currently (since no bias/other stuff in state) our observation matrix will just be I
+        scene_pos = glob_to_scene(gps_measurement_data['lat'], gps_measurement_data['lon'], gps_measurement_data['h'])
+        #print(f"pos=>{scene_pos}")
+        #print(f"vN=>{gps_measurement_data['vN']};acc={gps_measurement_data['sacc']}")
+
+        in_measurement = np.array([scene_pos[0], scene_pos[1], scene_pos[2], gps_measurement_data['vN'], gps_measurement_data['vE'], gps_measurement_data['vD']])
+
+        H = np.identity(self.state_size)
+
+        R = np.identity(self.state_size)
+        R[0, 0] = gps_measurement_data['hacc']**2
+        R[1, 1] = gps_measurement_data['hacc']**2
+        R[2, 2] = gps_measurement_data['vacc']**2
+        R[3, 3] = gps_measurement_data['sacc']**2
+        R[4, 4] = gps_measurement_data['sacc']**2
+        R[5, 5] = gps_measurement_data['sacc']**2
+        kalman_gain = self.estimate_covariance @ H.T @ np.linalg.inv(
+            H @ self.estimate_covariance @ H.T + R)
+
+        # Create new estimate & corresponding covariance
+        self.estimate = self.estimate + kalman_gain @ (in_measurement - H @ self.estimate)
+        self.estimate_covariance = (np.identity(
+            self.state_size) - kalman_gain @ H) @ self.estimate_covariance @ (
+                                           np.identity(
+                                               self.state_size) - kalman_gain @ H).T + kalman_gain @ R @ kalman_gain.T
+
+    def get_estimate(self):
+        return self.estimate
+
+    def get_estimate_covariance(self):
+        return self.estimate_covariance
+
+
 ACCEL_AVAIL_FLAG = 0b1
 GYRO_AVAIL_FLAG = 0b1 << 1
 GPS_AVAIL_FLAG = 0b1 << 2
@@ -199,15 +283,79 @@ data_thread.start()
 attitude_estimator = AttitudeEstimator()
 last_attitude_time = time.time()
 
+position_estimator = PositionEstimator()
+last_position_extrapolation_time = time.time()
+
+# Start a simple HTTP server so we can query the data from a browser/JS (easier real-time-ish visualization)
+class DataRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        estimate = position_estimator.get_estimate()
+        lat, lon, height = scene_to_glob(estimate[0], estimate[1], estimate[2])
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({'lat': lat, 'lon': lon, 'height': height}).encode())
+        return
+
+def run_server_thread():
+    webServer = HTTPServer(('127.0.0.1', 5000), DataRequestHandler)
+    webServer.serve_forever()
+data_thread = threading.Thread(target=run_server_thread)
+data_thread.start()
+
 while True:
     current_time = time.time()
     if stateFlags & ACCEL_AVAIL_FLAG and stateFlags & GYRO_AVAIL_FLAG:
         attitude_estimator.run_filter(current_time - last_attitude_time, accelState, gyroState)
         last_attitude_time = current_time
         #print(f"update_flag:{stateFlags:#010b}")
-        print(f"Estimate: {attitude_estimator.get_estimate_ypr()}")
+        ###print(f"Estimate: {attitude_estimator.get_estimate_ypr()}")
         # Clear the accel+gyro flag (TODO: do this at ennd in case another filter needs this data?)
-        stateFlags &= ~(ACCEL_AVAIL_FLAG | GYRO_AVAIL_FLAG)
+        #stateFlags &= ~(ACCEL_AVAIL_FLAG | GYRO_AVAIL_FLAG)
+        # Temp workaround: only clear gyro since others do not rely on it
+        stateFlags &= ~(GYRO_AVAIL_FLAG)
+
+    # Position filter - since GPS updates are pretty infrequent, it will be extrapolated more often than it is compared
+    # with the (GPS) measuremennts
+    if stateFlags & ACCEL_AVAIL_FLAG:
+        # Extrapolate position estimate
+        # Compute timestep
+        dt = current_time - last_position_extrapolation_time
+        last_position_extrapolation_time = current_time
+
+        # Convert accelerometer data into more useful acceleration vector (with gravity removed - gravity is assumed to
+        # cause a 1g acceleration) in WORLD/SCENE, not body coordinates
+        #yaw = np.deg2rad(attitude_estimator.get_estimate_ypr()['pitch'])#0#np.deg2rad(attitude_estimator.get_estimate_ypr()['yaw'])
+        #pitch = -np.deg2rad(attitude_estimator.get_estimate_ypr()['yaw'])#0#np.deg2rad(attitude_estimator.get_estimate_ypr()['pitch'])
+        #roll = attitude_estimator.get_estimate_ypr()['roll']
+        pitch = -np.deg2rad(attitude_estimator.get_estimate_ypr()['yaw'])
+        yaw = np.deg2rad(attitude_estimator.get_estimate_ypr()['pitch'])
+        roll = attitude_estimator.get_estimate_ypr()['roll']
+        body_to_inertial_matrix = np.array([
+            [np.cos(roll)*np.cos(pitch), np.cos(pitch)*np.sin(roll), -np.sin(pitch)],
+            [np.cos(roll)*np.sin(yaw)*np.sin(pitch) - np.cos(yaw)*np.sin(roll), np.cos(yaw)*np.cos(roll) + np.sin(yaw)*np.sin(roll)*np.sin(pitch), np.cos(pitch)*np.sin(yaw)],
+            [np.sin(yaw)*np.sin(roll) + np.cos(yaw)*np.cos(roll)*np.sin(pitch), np.cos(yaw)*np.sin(roll)*np.sin(pitch)-np.cos(roll)*np.sin(yaw), np.cos(yaw)*np.cos(pitch)]])
+        inertial_to_body_matrix = body_to_inertial_matrix.T  # Assume orthogonal matrix -> inverse is transpose
+        # Convert accelerometer measurement to inertial frame + subtract gravity (assume 1g)
+        in_accel = np.array([accelState['x'], accelState['y'], accelState['z']])
+        accel_vector_inertial = (body_to_inertial_matrix.T @ in_accel - np.array([0, 0, 1.1]))*9.81  # Apparently gravity is 1.1???
+        #print(f"{in_accel} -> {accel_vector_inertial}")
+
+        #position_estimator.run_filter_extrapolation(dt, accel_vector_inertial)
+        stateFlags &= ~ACCEL_AVAIL_FLAG
+
+    if stateFlags & GPS_AVAIL_FLAG:
+        # Ensure minimum accuracy requirements are met
+        if gpsState['hacc'] < 20 and gpsState['vacc'] < 20 and gpsState['sacc'] < 10:
+            position_estimator.run_filter_measurement(gpsState)
+        else:
+            print(f"WARNING: Minimum GPS accuracy requirements not met! (RAW: {gpsState})")
+
+        stateFlags &= ~GPS_AVAIL_FLAG
+        estimate = position_estimator.get_estimate()
+        print(scene_to_glob(estimate[0], estimate[1], estimate[2]))
+        print(position_estimator.get_estimate_covariance())
+
     time.sleep(0.05)
     continue
     if measurement:
