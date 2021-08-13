@@ -176,7 +176,7 @@ class PositionEstimator:
         F = np.vstack((np.hstack((np.identity(self.half_state_size), dt * np.identity(self.half_state_size))),
                        np.hstack((np.zeros((self.half_state_size, self.half_state_size)),
                                   np.identity(self.half_state_size)))))
-        G = dt * np.vstack((0.5*dt**2*np.identity(self.half_state_size), dt*np.identity(self.half_state_size)))
+        G = dt * np.vstack((0.5*(dt**2)*np.identity(self.half_state_size), dt*np.identity(self.half_state_size)))
 
         # Estimate covariance - obtained from the gyro's accuracy combined with how gyros affect the model (e.g. larger
         # dt means less certainty in the model)
@@ -213,8 +213,11 @@ class PositionEstimator:
         R[3, 3] = gps_measurement_data['sacc']**2
         R[4, 4] = gps_measurement_data['sacc']**2
         R[5, 5] = gps_measurement_data['sacc']**2
+        #R *= 10
         kalman_gain = self.estimate_covariance @ H.T @ np.linalg.inv(
             H @ self.estimate_covariance @ H.T + R)
+        print(f"R={R}")
+        print(kalman_gain)
 
         # Create new estimate & corresponding covariance
         self.estimate = self.estimate + kalman_gain @ (in_measurement - H @ self.estimate)
@@ -297,12 +300,18 @@ class DataRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'lat': lat, 'lon': lon, 'height': height}).encode())
         return
 
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        BaseHTTPRequestHandler.end_headers(self)
+
+
 def run_server_thread():
     webServer = HTTPServer(('127.0.0.1', 5000), DataRequestHandler)
     webServer.serve_forever()
 data_thread = threading.Thread(target=run_server_thread)
 data_thread.start()
 
+first_fix = False
 while True:
     current_time = time.time()
     if stateFlags & ACCEL_AVAIL_FLAG and stateFlags & GYRO_AVAIL_FLAG:
@@ -341,20 +350,30 @@ while True:
         accel_vector_inertial = (body_to_inertial_matrix.T @ in_accel - np.array([0, 0, 1.1]))*9.81  # Apparently gravity is 1.1???
         #print(f"{in_accel} -> {accel_vector_inertial}")
 
-        #position_estimator.run_filter_extrapolation(dt, accel_vector_inertial)
+        position_estimator.run_filter_extrapolation(dt, accel_vector_inertial) #, np.array([0, 0, 0]))
         stateFlags &= ~ACCEL_AVAIL_FLAG
 
     if stateFlags & GPS_AVAIL_FLAG:
         # Ensure minimum accuracy requirements are met
-        if gpsState['hacc'] < 20 and gpsState['vacc'] < 20 and gpsState['sacc'] < 10:
-            position_estimator.run_filter_measurement(gpsState)
+        stateCopy = gpsState.copy()
+        last_estimate = position_estimator.get_estimate()
+        if stateCopy['hacc'] < 15 and stateCopy['vacc'] < 15 and stateCopy['sacc'] < 1:
+            if True:#not first_fix:
+                position_estimator.run_filter_measurement(stateCopy)
+                first_fix = True
         else:
             print(f"WARNING: Minimum GPS accuracy requirements not met! (RAW: {gpsState})")
 
         stateFlags &= ~GPS_AVAIL_FLAG
         estimate = position_estimator.get_estimate()
-        print(scene_to_glob(estimate[0], estimate[1], estimate[2]))
-        print(position_estimator.get_estimate_covariance())
+
+        delta = estimate - last_estimate
+        if delta[0] > 1 or delta[1] > 1 or delta[2] > 1:
+            print("JUMP")
+            print(delta)
+            print(stateCopy)
+        #print(scene_to_glob(estimate[0], estimate[1], estimate[2]))
+        #print(position_estimator.get_estimate_covariance())
 
     time.sleep(0.05)
     continue

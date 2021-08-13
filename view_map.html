@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"
+  integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A=="
+  crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"
+  integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA=="
+  crossorigin=""></script>
+
+  <style>
+	  #mapid {
+		  width: 100%;
+		  min-height: 800px;
+	  }
+  </style>
+
+  <script>
+	  var map = null;
+	  var marker = null;
+	  function onLoad()
+	  {
+		 map = L.map('mapid', {}).setView([51.505, -0.09], 13);
+		 L.control.scale().addTo(map);
+
+
+
+		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+		    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+			maxZoom: 100,
+  			maxNativeZoom: 19
+		}).addTo(map);
+		console.log(map);
+
+		setInterval(fetch_new_pos, 1/30);
+	  }
+
+	  function fetch_new_pos()
+	  {
+		  //console.log(map)
+		  var request = new XMLHttpRequest();
+			request.open('GET', 'http://127.0.0.1:5000');
+			request.send();
+			request.onload = ()=>{
+			    response_json = JSON.parse(request.response);
+				//console.log(response_json);
+				if (marker == null)
+				{
+					marker = L.marker([response_json['lat'], response_json['lon']])
+					marker.addTo(map);
+					// Reposition map to where the marker is
+					map.setView([response_json['lat'], response_json['lon']], 18);
+				}
+				marker.setLatLng([response_json['lat'], response_json['lon']]);
+			}
+
+	  }
+  </script>
+</head>
+<body onload="onLoad();">
+	 <div id="mapid"></div>
+</body>
+</html>
