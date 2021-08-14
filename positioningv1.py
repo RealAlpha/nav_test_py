@@ -2,7 +2,7 @@ import asyncio
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import socket
+from helpers import get_measurement, establish_device_connection
 
 import numpy as np
 import serial
@@ -47,33 +47,6 @@ def scene_to_glob(x, y, z):
 
 
 #print(scene_to_glob(*glob_to_scene(10.000000000001,10,100)))
-
-
-async def get_measurement(ser):
-    try:
-        line = ""
-        while line == "":
-            try:
-                line = (await ser.readline()).decode().strip('\x00')
-            except:
-                # Retry
-                continue
-        pairs = line.split(",")
-        parse_result = {}
-        for pair in pairs:
-            # Attempt to convert the value to a float, but leave it as a string when this is impossible (e.g. for 'dev')
-            value = pair.split(":")[1]
-            try:
-                value = float(value)
-            except ValueError:
-                pass
-            parse_result[pair.split(":")[0]] = value
-
-        return parse_result
-    except BaseException as e:
-        print(e)
-        # Handles random exceptions and "failure" messages like: "NO FIX!"
-        return None
 
 
 class AttitudeEstimator:
@@ -267,7 +240,7 @@ async def perform_data_acquisition():
     #print(connection_fd)
     print(connection_fd.readline())
     """
-    reader, writer = await asyncio.open_connection('ESP-0F1694.home', 5000)
+    reader = await establish_device_connection()
     # Perform data acquisition until some form of exception is raised/the thread is otherwise terminated
     while True:
         measurement = await get_measurement(reader)
