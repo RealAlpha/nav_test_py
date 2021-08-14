@@ -4,8 +4,8 @@ import asyncio
 async def establish_device_connection():
     # Establish socket connnection to ESP8266 that outputs incoming serial data to a socket
     reader, writer = await asyncio.open_connection('ESP-0F1694.home', 5000)
-    # For backwards compatibility/not currently using any sendinng we only return the reader
-    return reader
+    # NOTE: Also returning the writer to ensure we can close the connnection manually if needed
+    return reader, writer
 
 
 async def get_measurement(ser):

@@ -240,7 +240,7 @@ async def perform_data_acquisition():
     #print(connection_fd)
     print(connection_fd.readline())
     """
-    reader = await establish_device_connection()
+    reader, writer = await establish_device_connection()
     # Perform data acquisition until some form of exception is raised/the thread is otherwise terminated
     while True:
         measurement = await get_measurement(reader)

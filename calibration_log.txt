@@ -1,0 +1,68 @@
+/usr/local/bin/python3.9 /Users/alpha-v/Documents/rcplane/measurements/calibration.py
+Enter the axis you'd like to calibrate (x,y,z) or e if you'd like to exit: x
+Press enter to start the calibration procedure (n=1000). Please make sure your device is in the proper position before doing so!
+Establishing connection...
+Connnected!
+Reading 1000 samples....
+Press ctrl+c to exit program.
+list index out of range
+10.0% done collecting samples.
+20.0% done collecting samples.
+30.0% done collecting samples.
+40.0% done collecting samples.
+50.0% done collecting samples.
+60.0% done collecting samples.
+70.0% done collecting samples.
+80.0% done collecting samples.
+90.0% done collecting samples.
+100.0% done collecting samples.
+Finished collecting samples!
+Average≈-0.9877079999999999
+Standard Deviation≈0.0059432933631110635
+Bias (assume gravity does indeed cause a 1g acceleration): -0.01229200000000008
+Done!
+Enter the axis you'd like to calibrate (x,y,z) or e if you'd like to exit: y
+Press enter to start the calibration procedure (n=1000). Please make sure your device is in the proper position before doing so!y
+Establishing connection...
+Connnected!
+Reading 1000 samples....
+Press ctrl+c to exit program.
+list index out of range
+10.0% done collecting samples.
+20.0% done collecting samples.
+30.0% done collecting samples.
+40.0% done collecting samples.
+50.0% done collecting samples.
+60.0% done collecting samples.
+70.0% done collecting samples.
+80.0% done collecting samples.
+90.0% done collecting samples.
+100.0% done collecting samples.
+Finished collecting samples!
+Average≈-1.0276280000000002
+Standard Deviation≈0.004980523667246251
+Bias (assume gravity does indeed cause a 1g acceleration): 0.027628000000000208
+Done!
+Enter the axis you'd like to calibrate (x,y,z) or e if you'd like to exit: z
+Press enter to start the calibration procedure (n=1000). Please make sure your device is in the proper position before doing so!
+Establishing connection...
+Connnected!
+Reading 1000 samples....
+Press ctrl+c to exit program.
+10.0% done collecting samples.
+list index out of range
+20.0% done collecting samples.
+30.0% done collecting samples.
+40.0% done collecting samples.
+50.0% done collecting samples.
+60.0% done collecting samples.
+70.0% done collecting samples.
+80.0% done collecting samples.
+90.0% done collecting samples.
+100.0% done collecting samples.
+Finished collecting samples!
+Average≈1.1611999999999998
+Standard Deviation≈0.007453321407265361
+Bias (assume gravity does indeed cause a 1g acceleration): 0.1611999999999998
+Done!
+Enter the axis you'd like to calibrate (x,y,z) or e if you'd like to exit: 
