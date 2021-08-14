@@ -39,7 +39,7 @@
 	  {
 		  //console.log(map)
 		  var request = new XMLHttpRequest();
-			request.open('GET', 'http://127.0.0.1:5000');
+			request.open('GET', 'http://192.168.1.47:5000');
 			request.send();
 			request.onload = ()=>{
 			    response_json = JSON.parse(request.response);

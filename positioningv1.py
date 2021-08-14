@@ -316,7 +316,7 @@ class DataRequestHandler(BaseHTTPRequestHandler):
 
 
 def run_server_thread():
-    webServer = HTTPServer(('127.0.0.1', 5000), DataRequestHandler)
+    webServer = HTTPServer(('0.0.0.0', 5000), DataRequestHandler)
     webServer.serve_forever()
 data_thread = threading.Thread(target=run_server_thread)
 data_thread.start()
