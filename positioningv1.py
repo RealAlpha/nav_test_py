@@ -132,7 +132,7 @@ class PositionEstimator:
         np.fill_diagonal(self.estimate_covariance, np.array([10000 ** 2, 10000 ** 2, 10000 ** 2, 50 ** 2, 50 ** 2, 50 ** 2]))
 
         # Assume accels are accurate to +- 0.5m/s^2 in all axis and uncorrelated between axis
-        self.accel_axis_variance = 0.5 ** 2
+        self.accel_axis_variance = 0.1 ** 2
         self.accel_covariance = self.accel_axis_variance * np.identity(3)
 
         # Helper variable for creating identity matrices and the kind
