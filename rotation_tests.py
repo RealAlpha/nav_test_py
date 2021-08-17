@@ -35,14 +35,26 @@ edges = (
     )
 
 
-def Cube(yaw, pitch, roll):
-    #yaw, pitch, roll = -pitch, yaw, roll
-    body_to_inertial_matrix = np.array([
+def get_rotation_matrix(yaw, pitch, roll):
+    return np.array([
         [np.cos(roll) * np.cos(pitch), np.cos(pitch) * np.sin(roll), -np.sin(pitch)],
         [np.cos(roll) * np.sin(yaw) * np.sin(pitch) - np.cos(yaw) * np.sin(roll),
          np.cos(yaw) * np.cos(roll) + np.sin(yaw) * np.sin(roll) * np.sin(pitch), np.cos(pitch) * np.sin(yaw)],
         [np.sin(yaw) * np.sin(roll) + np.cos(yaw) * np.cos(roll) * np.sin(pitch),
          np.cos(yaw) * np.sin(roll) * np.sin(pitch) - np.cos(roll) * np.sin(yaw), np.cos(yaw) * np.cos(pitch)]])
+
+
+def get_rotation_matrix_new(yaw, pitch, roll):
+    return np.array([
+        [np.cos(pitch), 0, np.sin(pitch)],
+        [0, 1, 0],
+        [-np.sin(pitch), 0, np.cos(pitch)]
+    ])
+
+
+def Cube(yaw, pitch, roll):
+    #yaw, pitch, roll = -pitch, yaw, roll
+    body_to_inertial_matrix = get_rotation_matrix(yaw, pitch, roll)
 
     # NED -> OpenGL's weird a$$ coordinate system
     """
@@ -69,21 +81,27 @@ def Cube(yaw, pitch, roll):
     glEnd()
 
 
-def drawVector(vec, start, color='white'):
+def drawVector(vec, start, color='white', color_shift=np.array([0, 0, 0])):
     """
     Helper function for drawing vectors at locations
     :return:
     """
     glLineWidth(10)
+    color_to_use = np.ones(3)  # White default
     if color == 'red':
-        glColor3f(1, 0, 0)
+        color_to_use = np.array([1.0, 0, 0])
     elif color == 'green':
-        glColor3f(0, 1, 0)
+        color_to_use = np.array([0, 1.0, 0])
     elif color == 'blue':
-        glColor3f(0, 0, 1)
+        color_to_use = np.array([0, 0, 1.0])
     else:
         # Assume white is default / this also happens to be the default line color -> no need to change anything
         pass
+
+    # Add the color shift and then change the GL color
+    color_to_use += color_shift
+    glColor3fv(color_to_use)
+
     glBegin(GL_LINES)
 
     glVertex3fv(start)
@@ -172,12 +190,33 @@ def main():
 
         #glRotatef(1, 3, 1, 1)
 
-        # Draw coordinate system basis
+        # Draw OpenGL coordinate system basis
         drawVector(np.array([1, 0, 0]), np.zeros(3), 'red')
         drawVector(np.array([0, 1, 0]), np.zeros(3), 'green')
         drawVector(np.array([0, 0, 1]), np.zeros(3), 'blue')
 
-        Cube(0, pitch, 0)
+        # Draw NED coordinate system basis
+        NED_color_shift = np.array([.5, 0, .5])
+        NED_to_openGL = np.array([
+            [1, 0, 0],  # NOTE: Share x-axis
+            [0, 0, -1],
+            [0, -1, 0]
+        ])
+
+        #NED_basis_in_ogl = NED_to_openGL @ np.identity
+        drawVector(NED_to_openGL[0], np.zeros(3), 'red', color_shift=NED_color_shift)
+        drawVector(NED_to_openGL[1], np.zeros(3), 'green', color_shift=NED_color_shift)
+        drawVector(NED_to_openGL[2], np.zeros(3), 'blue', color_shift=NED_color_shift)
+
+        #Cube(0, pitch, 0)
+
+        # Forward vector in NED coordinates
+        forward_NED = np.array([1, 0, 0])
+        # Rotate around pitch/y axis
+        rotated_vector = get_rotation_matrix_new(0, pitch, 0) @ forward_NED
+
+        # Convert to OGL coordinates/draw
+        drawVector(NED_to_openGL @ rotated_vector, np.zeros(3))
 
 
         viewport_cur_angles += viewport_angular_rates * dt
@@ -188,6 +227,6 @@ def main():
         #for i in range(3):
         #    glRotatef(-viewport_cur_angles[i], *np.identity(3)[i])
         pitch += 1 * dt
-        pygame.time.wait(1)
+        pygame.time.wait(10)
 
 main()
