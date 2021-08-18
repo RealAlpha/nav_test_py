@@ -1,5 +1,6 @@
 import asyncio
 import numpy as np
+import time
 import pandas
 from helpers import establish_device_connection, get_measurement
 
@@ -9,14 +10,14 @@ wants_stop = False  # Easy way to stop coroutinne
 
 # NOTE: Will call some blocking stuff but the easiest way to call other async stuff/to read data
 async def collect_samples():
-    while not wants_stop or len(data_buffer) > 1E6:
-        print("Establishing connection...")
-        reader, writer = await establish_device_connection()
-        print("Connected!")
-        while True:
-            measurement = await get_measurement(reader)
-            if measurement is not None and measurement.get('dev') == 'ACCEL':
-                data_buffer.append(measurement)
+    print("Establishing connection...")
+    reader, writer = await establish_device_connection()
+    print("Connected!")
+    while not wants_stop and len(data_buffer) < 1E6:
+        measurement = await get_measurement(reader)
+        if measurement is not None and measurement.get('dev') == 'ACCEL':
+            measurement['t'] = time.time()
+            data_buffer.append(measurement)
 
     print("Stopping (1M samples connected or exit requested...")
 
@@ -30,5 +31,5 @@ if __name__ == '__main__':
     finally:
         print("Saving data....")
         df = pandas.DataFrame(data_buffer, columns=['x', 'y', 'z'])
-        df.to_feather('data_dump.bin')
+        df.to_feather('data_dump_3.bin')
         print("Done!")
