@@ -1,7 +1,12 @@
 import asyncio
+import serial_asyncio
 
 
-async def establish_device_connection():
+async def establish_device_connection(use_serial=False):
+    if use_serial:
+        reader, writer = await serial_asyncio.open_serial_connection(url='/dev/tty.usbserial-A900HIOM', baudrate=2000000)
+        return reader, writer
+
     # Establish socket connnection to ESP8266 that outputs incoming serial data to a socket
     reader, writer = await asyncio.open_connection('ESP-0F1694.home', 5000)
     # NOTE: Also returning the writer to ensure we can close the connnection manually if needed
