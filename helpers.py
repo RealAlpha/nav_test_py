@@ -84,6 +84,7 @@ class DataPacket:
 accel_data_packet = DataPacket(0, 'fff', 'x y z', name_override='AccelData')
 gyro_data_packet = DataPacket(1, 'fff', 'gx gy gz', name_override='GyroData')
 mag_data_packet = DataPacket(2, 'fff', 'x y z', name_override='MagData')
+gps_data_packet = DataPacket(3, '?fffffffff', 'valid_fix latitude longitude height vN vE vD hAcc vAcc sAcc', name_override='MagData')
 
 
 class DataLink:
@@ -195,7 +196,7 @@ class DataLink:
 
 # DataLink usage example / test
 async def run_example():
-    test_link = DataLink(packet_filter=[accel_data_packet,  mag_data_packet], raw_mode=False)
+    test_link = DataLink(packet_filter=[gps_data_packet], raw_mode=False)
     await test_link.connect()
 
     while True:
