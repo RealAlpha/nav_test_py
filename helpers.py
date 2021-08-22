@@ -129,6 +129,10 @@ class DataLink:
         self.crc_fn = binascii.crc_hqx
         self.crc_size = 2
 
+        # Maximum number of iterations/other packets we'd like to receive that don't match any of the filters before
+        # giving up
+        self.max_num_iterations = 2500
+
         # The (asyncio) connection
         self.reader = None
         self.writer = None
@@ -145,53 +149,64 @@ class DataLink:
         Attempts to read a packet from the stream, and will return None if it fails.
 
         :return: Two cases:
-            [raw_mode=False]: The parsed packet struct; stream is re-tried until we find a matching entry
+            [raw_mode=False]: The parsed packet struct; stream is re-tried until we find a matching entry, or None if
+                              we exceed max: self.max_num_iterations packets without a valid one
             [raw_mode=True]: A tuple containing (pkt_id, payload_data) if successful, else None
         """
-        # Read until the (next) sync pattern / discard any (irrelevant) data
-        sync_data = await self.reader.readuntil(self.syncpattern)
+        # For packet filtering, we might want to read multiple packets if the one that comes in doesn't match any of the
+        # filters. To avoid this going on forever, we will, however, implement a timeout. Raw packet handling/found
+        # packets should just return out of this loop when the desired data has been obtained.
+        iteration_num = 0
+        while iteration_num <= self.max_num_iterations:
+            # Increase the iteration num
+            iteration_num += 1
 
-        # Read the header
-        header_data = await self.reader.readexactly(struct.calcsize(self.system_format + self.header_fmt))
-        header = self.HeaderType._make(struct.unpack(self.system_format + self.header_fmt, header_data))
+            # Read until the (next) sync pattern / discard any (irrelevant) data
+            sync_data = await self.reader.readuntil(self.syncpattern)
 
-        # Read the payload
-        payload_data = await self.reader.readexactly(header.payload_size)
+            # Read the header
+            header_data = await self.reader.readexactly(struct.calcsize(self.system_format + self.header_fmt))
+            header = self.HeaderType._make(struct.unpack(self.system_format + self.header_fmt, header_data))
 
-        # Read the checksum
-        pkt_checksum_data = await self.reader.readexactly(self.crc_size)
-        pkt_checksum = int.from_bytes(pkt_checksum_data, byteorder='little')
+            # Read the payload
+            payload_data = await self.reader.readexactly(header.payload_size)
 
-        # Ensure the packet's checksum matches the one we're expecting
-        # NOTE: 0xFFFF comes from INITIAL_REMAINDER
-        data_to_checksum = header_data + payload_data
-        computed_checksum = self.crc_fn(data_to_checksum, 0xFFFF)
+            # Read the checksum
+            pkt_checksum_data = await self.reader.readexactly(self.crc_size)
+            pkt_checksum = int.from_bytes(pkt_checksum_data, byteorder='little')
 
-        if computed_checksum != pkt_checksum:
-            print(f"Checksum mismatch! (expected={pkt_checksum}; computed={computed_checksum}")
-            print(f"Packet (' | ' as separator): {sync_data} | {header_data} | {payload_data} | {pkt_checksum_data}")
-            print(f"Checksum over: {data_to_checksum.hex().upper()}")
-            print(f"Header: {header}")
-            print(f"~computed_checksum: {~computed_checksum}")
-            print(f"Read Payload Size: {len(payload_data)}")
-            return None
+            # Ensure the packet's checksum matches the one we're expecting
+            # NOTE: 0xFFFF comes from INITIAL_REMAINDER
+            data_to_checksum = header_data + payload_data
+            computed_checksum = self.crc_fn(data_to_checksum, 0xFFFF)
 
-        # Return the data and packet ID if we're currently in RAW mode, else try to parse it / retry the measurement
-        # / go to the next packet if it doesn't match the filter or is otherwise invalid
-        if self.raw_mode:
-            return header.pkt_id, payload_data
+            if computed_checksum != pkt_checksum:
+                # Log some debugging information about the invalid/corrupted packet
+                print(f"Checksum mismatch! (expected={pkt_checksum}; computed={computed_checksum}")
+                print(f"Packet (' | ' as separator): {sync_data} | {header_data} | {payload_data} | {pkt_checksum_data}")
+                print(f"Checksum over: {data_to_checksum.hex().upper()}")
+                print(f"Header: {header}")
+                print(f"~computed_checksum: {~computed_checksum}")
+                print(f"Read Payload Size: {len(payload_data)}")
+                return None
 
-        packet_definition = self.packet_filter.get(header.pkt_id)
-        if packet_definition:
-            parsed_packet = packet_definition.data_to_obj(payload_data)
-            if parsed_packet is not None:
-                return parsed_packet
+            # Return the data and packet ID if we're currently in RAW mode, else try to parse it / retry the measurement
+            # / go to the next packet if it doesn't match the filter or is otherwise invalid
+            if self.raw_mode:
+                return header.pkt_id, payload_data
 
-        # Unable to parse packet (some form of parsing error or it doesn't match the filter) - re-try the measurement
-        # [using recursion because goto doesn't exist/this is easier than a loop]
-        # TODO: Implement some form of maximum layers / exhaustion case? We don't want to have this go on "forever"
-        #  (or until the max. recursion depth is reached)
-        return await self.get_measurement()
+            packet_definition = self.packet_filter.get(header.pkt_id)
+            if packet_definition:
+                parsed_packet = packet_definition.data_to_obj(payload_data)
+                if parsed_packet is not None:
+                    return parsed_packet
+
+            # Unable to parse packet (some form of parsing error or it doesn't match the filter) - re-try the
+            # measurement on the next iteration or exit out if we hit the maximum number of retires
+            continue
+
+        # If we got here, we weren't able to find a packet matching the criteria
+        return None
 
 
 # DataLink usage example / test
